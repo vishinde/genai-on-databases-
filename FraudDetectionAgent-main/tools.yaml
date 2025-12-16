@@ -1,0 +1,44 @@
+sources:
+  # Toolbox will use Application Default Credentials (ADC) for authentication.
+  bq-fraud-source:
+    kind: bigquery
+    # The BIGQUERY_PROJECT environment variable must be set externally 
+    # (e.g., BIGQUERY_PROJECT="my-alloydb-project-vivekshinde")
+
+tools:
+  realtime_fraud_check:
+    kind: bigquery-execute-sql
+    source: bq-fraud-source
+    description: "Executes a Zero-ETL query that joins all LATEST PENDING transactions from AlloyDB (live operational data) with the historical ML risk scores from the BigQuery data warehouse."
+    parameters: [] # No parameters needed, as the query pulls all pending transactions
+
+    # This consolidated query fetches ALL data needed by the agent in one call
+    statement: |
+      SELECT
+          live.customer_id,
+          live.transaction_amount,
+          hist.bqml_risk_score,               -- Historical ML Score (Feature)
+          hist.risk_segment                   -- Historical Risk Segment (Feature)
+      FROM
+          -- FEDERATED QUERY: Pulls ALL PENDING transactions from AlloyDB
+          EXTERNAL_QUERY(
+              'us.bq_alloydb_fraud_conn',
+              '''
+              SELECT 
+                  customer_id, 
+                  transaction_amount
+              FROM 
+                  public.transactions_live 
+              WHERE 
+                  status = 'PENDING' 
+              '''
+          ) AS live
+      LEFT JOIN
+          -- BIGQUERY: Join with the static risk profile
+          `my-alloydb-project-vivekshinde.bq_fraud_detection.historical_risk_profile` AS hist
+      ON live.customer_id = hist.customer_id
+      LIMIT 5; # Limit output for demo purposes
+
+toolsets:
+  realtime_fraud_check:
+    - realtime_fraud_check # Reference the tool name above
